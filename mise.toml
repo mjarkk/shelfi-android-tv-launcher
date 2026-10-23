@@ -1,0 +1,90 @@
+[vars]
+cmdline_tools = "23.0"
+app_id = "com.mkopenga.tvhomescreen"
+avd = "shelfi_tv"
+tv_image = "system-images;android-36;android-tv;arm64-v8a"
+# Serialises Gradle runs started from several terminals or agents at once; concurrent builds in one project dir clobber each other's outputs.
+gradlew = "lockf -k .gradle-build.lock ./gradlew"
+
+[tools]
+java = "temurin-21"
+android-sdk = "{{vars.cmdline_tools}}"
+
+[env]
+# ANDROID_HOME is exported by the android-sdk plugin: its mise install dir, which is also where sdkmanager puts packages.
+ANDROID_SDK_ROOT = { value = "{{env.ANDROID_HOME}}", tools = true }
+_.path = { path = [
+  "{{env.ANDROID_HOME}}/cmdline-tools/{{vars.cmdline_tools}}/bin",
+  "{{env.ANDROID_HOME}}/platform-tools",
+  "{{env.ANDROID_HOME}}/emulator",
+], tools = true }
+
+[tasks.setup]
+description = "Install the Android SDK packages the build needs and accept licenses (safe to re-run)"
+run = """
+yes | sdkmanager --licenses > /dev/null
+sdkmanager --install "platform-tools" "platforms;android-37.0" "build-tools;36.0.0"
+"""
+
+[tasks.desktop]
+description = "Run Shelfi on this Mac with fake data"
+run = "./gradlew :desktopApp:run"
+
+[tasks.apk]
+description = "Build the debug APK (Compose debug builds are slow; judge smoothness on apk:release)"
+run = "{{vars.gradlew}} :androidApp:assembleDebug"
+
+[tasks."apk:release"]
+description = "Build the R8-minified release APK, signed with the debug keystore for sideloading"
+run = "{{vars.gradlew}} :androidApp:assembleRelease"
+
+[tasks.install]
+description = "Install on the connected device/emulator and launch (pass `release` for the release build)"
+usage = 'arg "[variant]" help="debug or release" default="debug"'
+run = """
+case "$usage_variant" in
+  release) {{vars.gradlew}} :androidApp:installRelease ;;
+  debug) {{vars.gradlew}} :androidApp:installDebug ;;
+  *) echo "unknown variant: $usage_variant (expected debug or release)" >&2; exit 2 ;;
+esac
+adb shell am start -n {{vars.app_id}}/.MainActivity
+"""
+
+[tasks.home]
+description = "Make Shelfi the default home activity on the connected device"
+run = """
+adb shell cmd package set-home-activity {{vars.app_id}}/.MainActivity
+adb shell am start -a android.intent.action.MAIN -c android.intent.category.HOME
+"""
+
+[tasks.logs]
+description = "Follow logcat for the running Shelfi process"
+run = """
+pid=$(adb shell pidof -s {{vars.app_id}} || true)
+if [ -z "$pid" ]; then echo "Shelfi is not running; start it with: mise run install" >&2; exit 1; fi
+exec adb logcat -v color --pid="$pid"
+"""
+
+[tasks."emulator:create"]
+description = "Create the Android TV emulator (1080p TV, arm64 image; downloads the system image)"
+run = """
+sdkmanager --install "emulator" "{{vars.tv_image}}"
+if avdmanager list avd -c | grep -qx "{{vars.avd}}"; then echo "AVD {{vars.avd}} already exists"; exit 0; fi
+echo no | avdmanager create avd -n "{{vars.avd}}" -k "{{vars.tv_image}}" -d tv_1080p
+"""
+
+[tasks.emulator]
+description = "Boot the Android TV emulator created by emulator:create"
+run = "emulator -avd {{vars.avd}}"
+
+[tasks.test]
+description = "Run the shared unit tests on the JVM and as Android host tests"
+run = "{{vars.gradlew}} :shared:jvmTest :shared:testAndroidHostTest"
+
+[tasks.snapshot]
+description = "Render 1920x1080 PNGs of the home screen with fake data into build/snapshots"
+run = "{{vars.gradlew}} :shared:snapshot"
+
+[tasks.clean]
+description = "Delete all build outputs"
+run = "{{vars.gradlew}} clean"
