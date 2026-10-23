@@ -38,6 +38,15 @@ run = "{{vars.gradlew}} :androidApp:assembleDebug"
 description = "Build the R8-minified release APK, signed with the debug keystore for sideloading"
 run = "{{vars.gradlew}} :androidApp:assembleRelease"
 
+[tasks."apk:signer"]
+description = "Print the SHA-256 of the certificate that signed an APK (default: the release build)"
+usage = 'arg "[apk]" default="androidApp/build/outputs/apk/release/androidApp-release.apk"'
+run = """
+apksigner="$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -1)apksigner"
+certs=$("$apksigner" verify --print-certs "$usage_apk")
+echo "$certs" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p'
+"""
+
 [tasks.install]
 description = "Install on the connected device/emulator and launch (pass `release` for the release build)"
 usage = 'arg "[variant]" help="debug or release" default="debug"'
